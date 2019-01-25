@@ -138,8 +138,20 @@ $functionUrl = "https://$hostName/runtime/webhooks/EventGrid?functionName=$funct
 az provider show -n "Microsoft.EventGrid" --query "registrationState"
 az provider register -n "Microsoft.EventGrid" 
 az eventgrid event-subscription create -g $aciResourceGroup --name "AciEvents" `
+--endpoint-type "WebHook" --included-event-types "All" `
+--endpoint $functionUrl
+
+# trying an alternative way, also fails in the same way
+$subscriptionId = az account show --query id -o tsv
+$resourceId = "/subscriptions/$subscriptionId/resourcegroups/$aciResourceGroup"
+az eventgrid event-subscription create --name "AciEvents" `
+    --resource-id $resourceId `
     --endpoint-type "WebHook" --included-event-types "All" `
     --endpoint $functionUrl
 
 # The attempt to validate the provided endpoint https://durablefuncsaci26076.azurewebsites.net/runtime/webhooks/eventgrid failed. For more details, visit https://aka.ms/esvalidation.
 # https://docs.microsoft.com/en-us/azure/event-grid/security-authentication
+# https://github.com/Azure/azure-sdk-for-net/issues/4732
+# https://github.com/Azure/Azure-Functions/issues/1007
+az group deployment create -g $aciResourceGroup --template-file "EventGridSubscription.json" `
+    --parameters SubscriptionName=AciEvents1 WebhookUrl=$functionUrl
