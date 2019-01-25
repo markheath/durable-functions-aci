@@ -86,8 +86,8 @@ az functionapp deployment source config-zip `
  -g $resourceGroup -n $functionAppName --src $publishZip
 
 # create the event grid subscription
+# we need to get hold of some keys first
 $hostName = az functionapp show -g $resourceGroup -n $functionAppName --query "defaultHostName" -o tsv
-$code = "TODO - get function secure code" # func azure functionapp list-functions $functionAppName --show-keys
 
 #https://markheath.net/post/managing-azure-function-keys
 function getKuduCreds($appName, $resourceGroup)
@@ -131,11 +131,15 @@ $masterKey = getMasterFunctionKey $functionAppName $kuduCreds
 
 $extensionKey = (Invoke-RestMethod -Method GET -Uri "https://$functionAppName.azurewebsites.net/admin/host/systemkeys/eventgrid_extension?code=$masterKey").value
 $functionName = "AciMonitor"
-$functionUrl = "https://$hostName/runtime/webhooks/eventgrid?functionName=$functionName" + "&code=$code" # https://docs.microsoft.com/en-us/azure/azure-functions/functions-bindings-event-grid
+$functionUrl = "https://$hostName/runtime/webhooks/EventGrid?functionName=$functionName" + "&code=$extensionKey" # https://docs.microsoft.com/en-us/azure/azure-functions/functions-bindings-event-grid
 
-az eventgrid event-subscription create -g $resourceGroup --name "AciEvents" `
-    --endpoint-type "webhook" --included-event-types "All" `
-    --resource-id "" `
+# we're subscribing to events that happen in our ACI resource group
+# The Microsoft.EventGrid resource provider is not registered in subscription 671b9a61-c023-4cf4-8736-80875bd06db3
+az provider show -n "Microsoft.EventGrid" --query "registrationState"
+az provider register -n "Microsoft.EventGrid" 
+az eventgrid event-subscription create -g $aciResourceGroup --name "AciEvents" `
+    --endpoint-type "WebHook" --included-event-types "All" `
     --endpoint $functionUrl
 
-    
+# The attempt to validate the provided endpoint https://durablefuncsaci26076.azurewebsites.net/runtime/webhooks/eventgrid failed. For more details, visit https://aka.ms/esvalidation.
+# https://docs.microsoft.com/en-us/azure/event-grid/security-authentication
