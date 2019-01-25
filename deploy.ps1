@@ -52,10 +52,9 @@ az role assignment create --role "Contributor" `
     --assignee-object-id $principalId `
     --scope "/subscriptions/$subscriptionId/resourceGroups/$aciResourceGroup"
 
-# TODO - publish the function app
+# publish the function app
 $publishFolder = "publish"
 dotnet publish -c Release -o $publishFolder
-$publishFolder = "FunctionsDemo/bin/Release/netcoreapp2.1/publish"
 
 # create the zip
 $publishZip = "publish.zip"
@@ -71,7 +70,51 @@ az functionapp deployment source config-zip `
 $hostName = az functionapp show -g $resourceGroup -n $functionAppName --query "defaultHostName" -o tsv
 $code = "TODO - get function secure code" # func azure functionapp list-functions $functionAppName --show-keys
 
+#https://markheath.net/post/managing-azure-function-keys
+function getKuduCreds($appName, $resourceGroup)
+{
+    $user = az webapp deployment list-publishing-profiles -n $appName -g $resourceGroup `
+            --query "[?publishMethod=='MSDeploy'].userName" -o tsv
+
+    $pass = az webapp deployment list-publishing-profiles -n $appName -g $resourceGroup `
+            --query "[?publishMethod=='MSDeploy'].userPWD" -o tsv
+
+    $pair = "$($user):$($pass)"
+    $encodedCreds = [System.Convert]::ToBase64String([System.Text.Encoding]::ASCII.GetBytes($pair))
+    return $encodedCreds
+}
+
+function getMasterFunctionKey([string]$appName, [string]$encodedCreds)
+{
+    $jwt = Invoke-RestMethod -Uri "https://$appName.scm.azurewebsites.net/api/functions/admin/token" -Headers @{Authorization=("Basic {0}" -f $encodedCreds)} -Method GET
+
+    $keys = Invoke-RestMethod -Method GET -Headers @{Authorization=("Bearer {0}" -f $jwt)} `
+            -Uri "https://$appName.azurewebsites.net/admin/host/systemkeys/_master" 
+
+    # n.b. Key Management API documentation currently doesn't explain how to get master key correctly
+    # https://github.com/Azure/azure-functions-host/wiki/Key-management-API
+    # https://$appName.azurewebsites.net/admin/host/keys/_master = does NOT return master key
+    # https://$appName.azurewebsites.net/admin/host/systemkeys/_master = does return master key
+
+    return $keys.value
+}
+
+
+$kuduCreds = getKuduCreds $functionAppName $resourceGroup
+# $jwt = Invoke-RestMethod -Uri "https://$functionAppName.scm.azurewebsites.net/api/functions/admin/token" -Headers @{Authorization=("Basic {0}" -f $kuduCreds)} -Method GET
+
+$masterKey = getMasterFunctionKey $functionAppName $kuduCreds
+
+# ugh - my powershell needs to be updated to support TLS 1.1
+# https://stackoverflow.com/a/36266735/7532
+# $AllProtocols = [System.Net.SecurityProtocolType]'Ssl3,Tls,Tls11,Tls12'
+# [System.Net.ServicePointManager]::SecurityProtocol = $AllProtocols
+
+$extensionKey = (Invoke-RestMethod -Method GET -Uri "https://$functionAppName.azurewebsites.net/admin/host/systemkeys/eventgrid_extension?code=$masterKey").value
+$functionName = "AciMonitor"
+$functionUrl = "https://$hostName/runtime/webhooks/eventgrid?functionName=$functionName" + "&code=$code" # https://docs.microsoft.com/en-us/azure/azure-functions/functions-bindings-event-grid
+
 az eventgrid event-subscription create -g $resourceGroup --name "AciEvents" `
     --endpoint-type "webhook" --included-event-types "All" `
     --resource-id "" `
-    --endpoint https://$hostName/api/AciMonitor?code=$code
+    --endpoint $functionUrl
