@@ -133,13 +133,15 @@ $extensionKey = (Invoke-RestMethod -Method GET -Uri "https://$functionAppName.az
 $functionName = "AciMonitor"
 $functionUrl = "https://$hostName/runtime/webhooks/EventGrid?functionName=$functionName" + "&code=$extensionKey" # https://docs.microsoft.com/en-us/azure/azure-functions/functions-bindings-event-grid
 
+# this is so horrible! https://github.com/Azure/azure-cli/issues/7147
+$func2 = $functionUrl.Replace("&", "^^^&")
 # we're subscribing to events that happen in our ACI resource group
 # The Microsoft.EventGrid resource provider is not registered in subscription 671b9a61-c023-4cf4-8736-80875bd06db3
 az provider show -n "Microsoft.EventGrid" --query "registrationState"
 az provider register -n "Microsoft.EventGrid" 
 az eventgrid event-subscription create -g $aciResourceGroup --name "AciEvents" `
 --endpoint-type "WebHook" --included-event-types "All" `
---endpoint $functionUrl
+--endpoint $func2
 
 # trying an alternative way, also fails in the same way
 $subscriptionId = az account show --query id -o tsv
@@ -148,6 +150,8 @@ az eventgrid event-subscription create --name "AciEvents" `
     --resource-id $resourceId `
     --endpoint-type "WebHook" --included-event-types "All" `
     --endpoint $functionUrl
+
+
 
 # The attempt to validate the provided endpoint https://durablefuncsaci26076.azurewebsites.net/runtime/webhooks/eventgrid failed. For more details, visit https://aka.ms/esvalidation.
 # https://docs.microsoft.com/en-us/azure/event-grid/security-authentication
