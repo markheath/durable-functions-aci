@@ -36,6 +36,25 @@ az functionapp create `
     --runtime dotnet `
     -g $resourceGroup
 
+# create an app insights instance
+$propsFile = "props.json"
+'{"Application_Type":"web"}' | Out-File $propsFile
+$appInsightsName = "$prefix$rand"
+az resource create `
+    -g $resourceGroup -n $appInsightsName `
+    --resource-type "Microsoft.Insights/components" `
+    --properties "@$propsFile"
+Remove-Item $propsFile
+
+# get the app insights key
+$appInsightsKey = az resource show -g $resourceGroup -n $appInsightsName `
+    --resource-type "Microsoft.Insights/components" `
+    --query "properties.InstrumentationKey" -o tsv
+
+# configure app insights for our function app
+az functionapp config appsettings set -n $functionAppName -g $resourceGroup `
+    --settings "APPINSIGHTS_INSTRUMENTATIONKEY=$appInsightsKey"
+
 # create a managed identity (idempotent - returns the existing identity if there already is one)
 az functionapp identity assign -n $functionAppName -g $resourceGroup
 
@@ -118,3 +137,5 @@ az eventgrid event-subscription create -g $resourceGroup --name "AciEvents" `
     --endpoint-type "webhook" --included-event-types "All" `
     --resource-id "" `
     --endpoint $functionUrl
+
+    
