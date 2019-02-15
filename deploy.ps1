@@ -67,6 +67,9 @@ $tenantId = az functionapp identity show -n $functionAppName -g $resourceGroup -
 # not sure if I need    --resource-group $resourceGroup `
 
 $subscriptionId = az account show --query "id" -o tsv
+az role assignment list  --assignee $principalId `
+    --scope "/subscriptions/$subscriptionId/resourceGroups/$aciResourceGroup"
+
 az role assignment create --role "Contributor" `
     --assignee-object-id $principalId `
     --scope "/subscriptions/$subscriptionId/resourceGroups/$aciResourceGroup"
@@ -159,3 +162,26 @@ az eventgrid event-subscription create --name "AciEvents" `
 # https://github.com/Azure/Azure-Functions/issues/1007
 az group deployment create -g $aciResourceGroup --template-file "EventGridSubscription.json" `
     --parameters SubscriptionName=AciEvents1 WebhookUrl=$functionUrl
+
+
+
+# setting up the ACI app settings
+az functionapp config appsettings set -n $functionAppName -g $resourceGroup `
+    --settings "AciResourceGroup=$aciResourceGroup" "SubscriptionId=$subscriptionId"
+
+
+# calling the function
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+# todo get the function code
+$containerGroupName = "markacitest1"
+Invoke-WebRequest -Uri "https://durablefuncsaci26076.azurewebsites.net/api/AciCreate?code=$functionCode&name=$containerGroupName"
+
+
+# check it worked
+az resource list -g $aciResourceGroup -o table
+az container show -g $aciResourceGroup -n $containerGroupName
+$containerDomain = az container show -g $aciResourceGroup -n $containerGroupName --query "ipAddress.fqdn" -o tsv
+Start-Process "http://$containerDomain"
+
+# clean up the container
+az container delete -g $aciResourceGroup -n $containerGroupName
