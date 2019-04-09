@@ -173,7 +173,18 @@ az functionapp config appsettings set -n $functionAppName -g $resourceGroup `
 #[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $functionCode = getFunctionKey $functionAppName "AciCreate" $kuduCreds 
 $containerGroupName = "markacitest1"
-Invoke-WebRequest -Uri "https://$hostName/api/AciCreate?code=$functionCode&name=$containerGroupName"
+$definition = @{
+    ResourceGroupName=$aciResourceGroup
+    ContainerGroupName=$containerGroupName
+    ContainerImage="markheath/miniblogcore:v1-linux"
+    
+}
+$json = $definition | ConvertTo-Json
+
+Invoke-WebRequest -Method POST `
+                  -Uri "https://$hostName/api/AciCreate?code=$functionCode" `
+                  -Body $json `
+                  -Headers @{ "Content-Type"="application/json" }
 
 # check it worked
 az resource list -g $aciResourceGroup -o table
