@@ -30,35 +30,22 @@ az storage account create `
   -g $resourceGroup `
   --sku Standard_LRS
 
+# create an app insights instance
+$appInsightsName = "$prefix$rand"
+az resource create `
+  -g $resourceGroup -n $appInsightsName `
+  --resource-type "Microsoft.Insights/components" `
+  --properties '{\"Application_Type\":\"web\"}'
+
 # create a function app running on consumption plan
 $functionAppName = "$prefix$rand"
 az functionapp create `
     -n $functionAppName `
     --storage-account $storageAccountName `
     --consumption-plan-location $location `
+    --app-insights $appInsightsName `
     --runtime dotnet `
     -g $resourceGroup
-
-# create an app insights instance
-$propsFile = "props.json"
-'{"Application_Type":"web"}' | Out-File $propsFile
-
-# todo: try with '{\"Application_Type\":\"web\"}'
-$appInsightsName = "$prefix$rand"
-az resource create `
-    -g $resourceGroup -n $appInsightsName `
-    --resource-type "Microsoft.Insights/components" `
-    --properties '{\"Application_Type\":\"web\"}'
-Remove-Item $propsFile
-
-# get the app insights key
-$appInsightsKey = az resource show -g $resourceGroup -n $appInsightsName `
-    --resource-type "Microsoft.Insights/components" `
-    --query "properties.InstrumentationKey" -o tsv
-
-# configure app insights for our function app
-az functionapp config appsettings set -n $functionAppName -g $resourceGroup `
-    --settings "APPINSIGHTS_INSTRUMENTATIONKEY=$appInsightsKey"
 
 # create a managed identity (idempotent - returns the existing identity if there already is one)
 az functionapp identity assign -n $functionAppName -g $resourceGroup
@@ -66,15 +53,16 @@ az functionapp identity assign -n $functionAppName -g $resourceGroup
 $principalId = az functionapp identity show -n $functionAppName -g $resourceGroup --query principalId -o tsv
 $tenantId = az functionapp identity show -n $functionAppName -g $resourceGroup --query tenantId -o tsv
 
-# let's see if we can grant the Function App's managed identity contributor rights to this resource group
+# grant the Function App's managed identity contributor rights to this resource group
 # so it can create Azure CLI instances
 # https://docs.microsoft.com/en-us/azure/role-based-access-control/role-assignments-cli
-# not sure if I need    --resource-group $resourceGroup `
 
 $subscriptionId = az account show --query "id" -o tsv
+# to see if any assignments already exist:
 az role assignment list  --assignee $principalId `
     --scope "/subscriptions/$subscriptionId/resourceGroups/$aciResourceGroup"
 
+# grant the contributor role
 az role assignment create --role "Contributor" `
     --assignee-object-id $principalId `
     --scope "/subscriptions/$subscriptionId/resourceGroups/$aciResourceGroup"
@@ -126,6 +114,16 @@ function getMasterFunctionKey([string]$appName, [string]$encodedCreds)
     return $keys.value
 }
 
+function getFunctionKey([string]$appName, [string]$functionName, [string]$encodedCreds)
+{
+    $jwt = Invoke-RestMethod -Uri "https://$appName.scm.azurewebsites.net/api/functions/admin/token" -Headers @{Authorization=("Basic {0}" -f $encodedCreds)} -Method GET
+
+    $keys = Invoke-RestMethod -Method GET -Headers @{Authorization=("Bearer {0}" -f $jwt)} `
+            -Uri "https://$appName.azurewebsites.net/admin/functions/$functionName/keys" 
+
+    $code = $keys.keys[0].value
+    return $code
+}
 
 $kuduCreds = getKuduCreds $functionAppName $resourceGroup
 # $jwt = Invoke-RestMethod -Uri "https://$functionAppName.scm.azurewebsites.net/api/functions/admin/token" -Headers @{Authorization=("Basic {0}" -f $kuduCreds)} -Method GET
@@ -145,30 +143,25 @@ $functionUrl = "https://$hostName/runtime/webhooks/EventGrid?functionName=$funct
 $func2 = $functionUrl.Replace("&", "^^^&")
 # we're subscribing to events that happen in our ACI resource group
 # The Microsoft.EventGrid resource provider is not registered in subscription 671b9a61-c023-4cf4-8736-80875bd06db3
+# check we're registered for creating EventGrid subscriptions
 az provider show -n "Microsoft.EventGrid" --query "registrationState"
+# register if not
 az provider register -n "Microsoft.EventGrid" 
-az eventgrid event-subscription create -g $aciResourceGroup --name "AciEvents" `
---endpoint-type "WebHook" --included-event-types "All" `
---endpoint $func2
-
-# trying an alternative way, also fails in the same way
+# create the event grid
 $subscriptionId = az account show --query id -o tsv
 $resourceId = "/subscriptions/$subscriptionId/resourcegroups/$aciResourceGroup"
 az eventgrid event-subscription create --name "AciEvents" `
-    --resource-id $resourceId `
+    --source-resource-id $resourceId `
     --endpoint-type "WebHook" --included-event-types "All" `
-    --endpoint $functionUrl
-
-
+    --endpoint $func2
 
 # The attempt to validate the provided endpoint https://durablefuncsaci26076.azurewebsites.net/runtime/webhooks/eventgrid failed. For more details, visit https://aka.ms/esvalidation.
 # https://docs.microsoft.com/en-us/azure/event-grid/security-authentication
 # https://github.com/Azure/azure-sdk-for-net/issues/4732
 # https://github.com/Azure/Azure-Functions/issues/1007
-az group deployment create -g $aciResourceGroup --template-file "EventGridSubscription.json" `
-    --parameters SubscriptionName=AciEvents1 WebhookUrl=$functionUrl
-
-
+# an alternative way that uses an ARM template
+#az group deployment create -g $aciResourceGroup --template-file "EventGridSubscription.json" `
+#     --parameters SubscriptionName=AciEvents1 WebhookUrl=$functionUrl
 
 # setting up the ACI app settings
 az functionapp config appsettings set -n $functionAppName -g $resourceGroup `
@@ -176,11 +169,11 @@ az functionapp config appsettings set -n $functionAppName -g $resourceGroup `
 
 
 # calling the function
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-# todo get the function code
+# ensure TLS 1.2 enabled
+#[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$functionCode = getFunctionKey $functionAppName "AciCreate" $kuduCreds 
 $containerGroupName = "markacitest1"
-Invoke-WebRequest -Uri "https://durablefuncsaci26076.azurewebsites.net/api/AciCreate?code=$functionCode&name=$containerGroupName"
-
+Invoke-WebRequest -Uri "https://$hostName/api/AciCreate?code=$functionCode&name=$containerGroupName"
 
 # check it worked
 az resource list -g $aciResourceGroup -o table
@@ -189,8 +182,7 @@ $containerDomain = az container show -g $aciResourceGroup -n $containerGroupName
 Start-Process "http://$containerDomain"
 
 # clean up the container
-az container delete -g $aciResourceGroup -n $containerGroupName
-
+az container delete -g $aciResourceGroup -n $containerGroupName -y
 
 # to delete the event grid subscription
 az eventgrid event-subscription delete --name "AciEvents" --source-resource-id $resourceId
