@@ -7,6 +7,9 @@ $resourceGroup = "DurableFunctionsAci"
 $location = "westeurope"
 az group create -n $resourceGroup -l $location
 
+# to see if anything was already in there
+az resource list -g $resourceGroup -o table
+
 $aciResourceGroup = "DurableFunctionsAciContainers"
 az group create -n $aciResourceGroup -l $location
 
@@ -39,11 +42,13 @@ az functionapp create `
 # create an app insights instance
 $propsFile = "props.json"
 '{"Application_Type":"web"}' | Out-File $propsFile
+
+# todo: try with '{\"Application_Type\":\"web\"}'
 $appInsightsName = "$prefix$rand"
 az resource create `
     -g $resourceGroup -n $appInsightsName `
     --resource-type "Microsoft.Insights/components" `
-    --properties "@$propsFile"
+    --properties '{\"Application_Type\":\"web\"}'
 Remove-Item $propsFile
 
 # get the app insights key
@@ -185,3 +190,11 @@ Start-Process "http://$containerDomain"
 
 # clean up the container
 az container delete -g $aciResourceGroup -n $containerGroupName
+
+
+# to delete the event grid subscription
+az eventgrid event-subscription delete --name "AciEvents" --source-resource-id $resourceId
+
+az group delete -n $resourceGroup -y --no-wait
+
+az group delete -n $aciResourceGroup -y --no-wait
