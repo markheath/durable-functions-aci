@@ -30,6 +30,15 @@ az storage account create `
   -g $resourceGroup `
   --sku Standard_LRS
 
+$storageAccountKey = az storage account keys list -n $storageAccountName --query [0].value -o tsv
+
+# create a file share (for ACI to use later)
+$shareName = "acishare"
+az storage share create `
+  -n $shareName `
+  --account-key $storageAccountKey `
+  --account-name $storageAccountName
+
 # create an app insights instance
 $appInsightsName = "$prefix$rand"
 az resource create `
@@ -177,7 +186,14 @@ $definition = @{
     ResourceGroupName=$aciResourceGroup
     ContainerGroupName=$containerGroupName
     ContainerImage="markheath/miniblogcore:v1-linux"
-    
+    AzureFileShareVolumes=@(
+        @{
+            StorageAccountName=$storageAccountName
+            StorageAccountKey=$storageAccountKey
+            ShareName=$shareName
+            VolumeName="vol-1"
+            MountPath="/data/test/"
+        })
 }
 $json = $definition | ConvertTo-Json
 
