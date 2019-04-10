@@ -16,10 +16,10 @@ using System.Collections.Generic;
 using Microsoft.Azure.Management.ContainerInstance.Fluent.Models;
 using Microsoft.Azure.Management.ContainerInstance.Fluent.ContainerGroup.Definition;
 using System.Linq;
+using System.Threading;
 
 namespace DurableFunctionsAci
 {
-
     public static class AciCreate
     {
         private static IAzure azure = GetAzure();
@@ -58,6 +58,40 @@ namespace DurableFunctionsAci
         {
             var definition = ctx.GetInput<ContainerGroupDefinition>();
             await ctx.CallActivityAsync(nameof(AciCreateActivity), definition);
+            if (ctx.IsReplaying)
+                log.LogInformation("Created container");
+            await ctx.CallSubOrchestratorAsync(nameof(AciWaitForExitOrchestrator), definition);
+            if (ctx.IsReplaying)
+                log.LogInformation("Container has exited");
+            await ctx.CallActivityAsync(nameof(AciDeleteContainerGroupActivity), definition);
+            if (ctx.IsReplaying)
+                log.LogInformation("Container has been deleted");
+        }
+
+        [FunctionName(nameof(AciWaitForExitOrchestrator))]
+        public static async Task AciWaitForExitOrchestrator(
+            [OrchestrationTrigger] DurableOrchestrationContextBase ctx,
+            ILogger log)
+        {
+            var definition = ctx.GetInput<ContainerGroupDefinition>();
+            var containerGroupStatus = await ctx.CallActivityAsync<ContainerGroupStatus>(nameof(AciGetContainerGroupStatusActivity), definition);
+            log.LogInformation($"{containerGroupStatus.Name} status: {containerGroupStatus.State}, " +
+                $"{containerGroupStatus.Containers[0]?.CurrentState?.State}, " +
+                $"{containerGroupStatus.Containers[0]?.CurrentState?.DetailStatus}");
+            // states we've seen: "Terminated"
+            // detailState = completed
+            if (containerGroupStatus.Containers[0]?.CurrentState?.State == "Terminated")
+            {
+                return;
+            }
+
+            // go round again
+            using(var cts = new CancellationTokenSource())
+            {
+                await ctx.CreateTimer(ctx.CurrentUtcDateTime.AddSeconds(30), cts.Token);
+            }
+            
+            ctx.ContinueAsNew(definition);
         }
 
         [FunctionName(nameof(AciCreateActivity))]
@@ -67,6 +101,25 @@ namespace DurableFunctionsAci
         )
         {
             await RunTaskBasedContainer(logger, definition);
+        }
+
+        
+        [FunctionName(nameof(AciGetContainerGroupStatusActivity))]
+        public static async Task<ContainerGroupStatus> AciGetContainerGroupStatusActivity(
+            [ActivityTrigger] ContainerGroupDefinition definition,
+            ILogger logger
+        )
+        {
+            return await GetContainerGroupStatus(logger, definition);
+        }
+
+        [FunctionName(nameof(AciDeleteContainerGroupActivity))]
+        public static async Task AciDeleteContainerGroupActivity(
+            [ActivityTrigger] ContainerGroupDefinition definition,
+            ILogger logger
+        )
+        {
+            await DeleteContainerGroup(logger, definition);
         }
 
         private static IAzure GetAzure()
@@ -167,6 +220,38 @@ namespace DurableFunctionsAci
             // Print the container's logs
             //Console.WriteLine($"Logs for container '{containerGroupName}-1':");
             //Console.WriteLine(await containerGroup.GetLogContentAsync(containerGroupName + "-1"));
+        }
+
+        private static async Task<ContainerGroupStatus> GetContainerGroupStatus(
+                    ILogger log,
+                    ContainerGroupDefinition cg)
+        {
+            log.LogInformation($"Requesting container group '{cg.ContainerGroupName}' status");
+
+            var containerGroup = await azure.ContainerGroups.GetByResourceGroupAsync(cg.ResourceGroupName, cg.ContainerGroupName);
+            log.LogInformation($"Got container group state '{containerGroup.State}' with {containerGroup.Containers.Count} containers");
+            var status = new ContainerGroupStatus() {
+                State = containerGroup.State,
+                Id = containerGroup.Id,
+                Name = containerGroup.Name,
+                ResourceGroupName = containerGroup.ResourceGroupName,
+                Containers = containerGroup.Containers.Values.Select(c => new ContainerInstanceStatus() {
+                    Name = c.Name,
+                    Image = c.Image,
+                    Command = c.Command,
+                    CurrentState = c.InstanceView.CurrentState,
+                    RestartCount = c.InstanceView.RestartCount,
+                }).ToArray()
+            };
+            return status;
+        }
+
+        private static async Task DeleteContainerGroup(
+            ILogger log,
+            ContainerGroupDefinition cg)
+        {
+            log.LogInformation($"Deleting container group '{cg.ContainerGroupName}' status");
+            await azure.ContainerGroups.DeleteByResourceGroupAsync(cg.ResourceGroupName, cg.ContainerGroupName);
         }
 
         public static string[] SplitArguments(string commandLine)

@@ -176,7 +176,6 @@ az eventgrid event-subscription create --name "AciEvents" `
 az functionapp config appsettings set -n $functionAppName -g $resourceGroup `
     --settings "AciResourceGroup=$aciResourceGroup" "SubscriptionId=$subscriptionId"
 
-
 # calling the function
 # ensure TLS 1.2 enabled
 #[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
