@@ -14,6 +14,8 @@ namespace DurableFunctionsAci
         [FunctionName("AciMonitor")]
         public static void Run([EventGridTrigger]EventGridEvent eventGridEvent, ILogger log)
         {
+            log.LogInformation($"{eventGridEvent.EventType}-{eventGridEvent.Subject}-{eventGridEvent.Topic}");
+            
             log.LogInformation(eventGridEvent.Data.ToString());
         }
     }

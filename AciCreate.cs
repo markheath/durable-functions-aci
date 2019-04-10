@@ -19,24 +19,6 @@ using System.Linq;
 
 namespace DurableFunctionsAci
 {
-    class ContainerGroupDefinition
-    {
-        public string ResourceGroupName { get; set; }
-        public string ContainerGroupName { get; set; }
-        public string ContainerImage { get; set;}
-        public string CommandLine { get; set; }
-        public List<AzureFileShareVolumeDefinition> AzureFileShareVolumes { get; set; }
-        public Dictionary<string, string> EnvironmentVariables { get; set; }
-    }
-
-    class AzureFileShareVolumeDefinition
-    {
-        public string StorageAccountName { get; set; }
-        public string StorageAccountKey { get; set; }
-        public string ShareName { get; set; }
-        public string VolumeName { get; set; }
-        public string MountPath { get; set; }
-    }
 
     public static class AciCreate
     {
@@ -45,6 +27,7 @@ namespace DurableFunctionsAci
         [FunctionName("AciCreate")]
         public static async Task<IActionResult> Run(
             [HttpTrigger(AuthorizationLevel.Function, "post")] HttpRequest req,
+            [OrchestrationClient] DurableOrchestrationClientBase client,
             ILogger log)
         {
             var body = await req.ReadAsStringAsync();
@@ -63,8 +46,27 @@ namespace DurableFunctionsAci
                 { "Name", "Value" },
             };
 
-            await RunTaskBasedContainer(log, def);
-            return new OkObjectResult($"Started {def.ContainerGroupName}");
+            //await RunTaskBasedContainer(log, def);
+            var orchestrationId = await client.StartNewAsync(nameof(AciCreateOrchestrator), def);
+            return new OkObjectResult($"Started {def.ContainerGroupName} with {orchestrationId}");
+        }
+
+        [FunctionName(nameof(AciCreateOrchestrator))]
+        public static async Task AciCreateOrchestrator(
+            [OrchestrationTrigger] DurableOrchestrationContextBase ctx,
+            ILogger log)
+        {
+            var definition = ctx.GetInput<ContainerGroupDefinition>();
+            await ctx.CallActivityAsync(nameof(AciCreateActivity), definition);
+        }
+
+        [FunctionName(nameof(AciCreateActivity))]
+        public static async Task AciCreateActivity(
+            [ActivityTrigger] ContainerGroupDefinition definition,
+            ILogger logger
+        )
+        {
+            await RunTaskBasedContainer(logger, definition);
         }
 
         private static IAzure GetAzure()
