@@ -182,7 +182,7 @@ az functionapp config appsettings set -n $functionAppName -g $resourceGroup `
 #[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $functionCode = getFunctionKey $functionAppName "AciCreate" $kuduCreds 
 $containerGroupName = "markacitest1"
-$definition = @{
+$miniBlogCore = @{
     ResourceGroupName=$aciResourceGroup
     ContainerGroupName=$containerGroupName
     ContainerImage="markheath/miniblogcore:v1-linux"
@@ -195,18 +195,53 @@ $definition = @{
             MountPath="/data/test/"
         })
 }
-$json = $definition | ConvertTo-Json
+
+$testVideoFilename = "azfr536_mid.mp4"
+$testVideo = "https://sec.ch9.ms/ch9/6fde/5c47fd06-e7d0-40d8-ab88-fe25edd66fde/$testVideoFilename"
+Invoke-WebRequest -Uri $testVideo -OutFile $testVideoFilename
+az storage file upload -s $shareName --source "$testVideoFilename" `
+        --account-key $storageAccountKey `
+        --account-name $storageAccountName
+
+$mountPath ="/mnt/azfile"
+$commandLine = "ffmpeg -i $mountPath/$testVideoFilename -vf" + `
+    " ""thumbnail,scale=640:360"" -frames:v 1 $mountPath/thumb.png"
+$ffmpeg = @{
+    ResourceGroupName=$aciResourceGroup
+    ContainerGroupName=$containerGroupName
+    ContainerImage="jrottenberg/ffmpeg"
+    CommandLine=$commandLine
+    AzureFileShareVolumes=@(
+        @{
+            StorageAccountName=$storageAccountName
+            StorageAccountKey=$storageAccountKey
+            ShareName=$shareName
+            VolumeName="vol-1"
+            MountPath="/mnt/azfile"
+        })
+}
+
+$json = $ffmpeg | ConvertTo-Json
 
 Invoke-WebRequest -Method POST `
                   -Uri "https://$hostName/api/AciCreate?code=$functionCode" `
                   -Body $json `
                   -Headers @{ "Content-Type"="application/json" }
 
-# check it worked
+# check the container exists
 az resource list -g $aciResourceGroup -o table
+# see detailed information about the container
 az container show -g $aciResourceGroup -n $containerGroupName
+# look to see if it has finished
+az container show -g $aciResourceGroup -n $containerGroupName --query "containers[0].instanceView.currentState"
+# get container domain name (for websites)
 $containerDomain = az container show -g $aciResourceGroup -n $containerGroupName --query "ipAddress.fqdn" -o tsv
 Start-Process "http://$containerDomain"
+
+# check the contents of the file share
+az storage file list -s $shareName  `
+        --account-key $storageAccountKey `
+        --account-name $storageAccountName -o table
 
 # clean up the container
 az container delete -g $aciResourceGroup -n $containerGroupName -y

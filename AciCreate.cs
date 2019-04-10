@@ -150,8 +150,14 @@ namespace DurableFunctionsAci
             if (vol != null)
                 withInstance = withInstance.WithVolumeMountSetting(vol.VolumeName, vol.MountPath);
 
+            if (!String.IsNullOrEmpty(cg.CommandLine))
+            {
+                var args = SplitArguments(cg.CommandLine);
+                log.LogInformation("Command line: " + String.Join('|',args));
+                withInstance = withInstance.WithStartingCommandLine(args[0], args.Skip(1).ToArray());
+            }
+
             var withCreate = withInstance
-                    //.WithStartingCommandLine(startCommandLine)
                     .WithEnvironmentVariables(cg.EnvironmentVariables)
                     .Attach()
                 .WithDnsPrefix(cg.ContainerGroupName)
@@ -162,5 +168,29 @@ namespace DurableFunctionsAci
             //Console.WriteLine($"Logs for container '{containerGroupName}-1':");
             //Console.WriteLine(await containerGroup.GetLogContentAsync(containerGroupName + "-1"));
         }
+
+        public static string[] SplitArguments(string commandLine)
+        {
+            var parmChars = commandLine.ToCharArray();
+            var inSingleQuote = false;
+            var inDoubleQuote = false;
+            for (var index = 0; index < parmChars.Length; index++)
+            {
+                if (parmChars[index] == '"' && !inSingleQuote)
+                {
+                    inDoubleQuote = !inDoubleQuote;
+                    parmChars[index] = '\n';
+                }
+                if (parmChars[index] == '\'' && !inDoubleQuote)
+                {
+                    inSingleQuote = !inSingleQuote;
+                    parmChars[index] = '\n';
+                }
+                if (!inSingleQuote && !inDoubleQuote && parmChars[index] == ' ')
+                    parmChars[index] = '\n';
+            }
+            return (new string(parmChars)).Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
+        }
     }
+    
 }
