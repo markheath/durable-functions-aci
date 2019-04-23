@@ -46,15 +46,22 @@ namespace DurableFunctionsAci
             ILogger log)
         {
             var definition = ctx.GetInput<ContainerGroupDefinition>();
+            var startTime = ctx.CurrentUtcDateTime;
+            ctx.SetCustomStatus("creating container");
             await ctx.CallActivityAsync(nameof(AciCreateActivity), definition);
             if (ctx.IsReplaying)
                 log.LogInformation("Created container");
-            await ctx.CallSubOrchestratorAsync(nameof(AciWaitForExitOrchestrator), definition);
+            
+            var subOrchestrationId = $"{ctx.InstanceId}-1";
+            ctx.SetCustomStatus($"waiting for container - {subOrchestrationId}");
+            await ctx.CallSubOrchestratorAsync(nameof(AciWaitForExitOrchestrator), subOrchestrationId, definition);
             if (ctx.IsReplaying)
                 log.LogInformation("Container has exited");
+            ctx.SetCustomStatus("deleting container");
             await ctx.CallActivityAsync(nameof(AciDeleteContainerGroupActivity), definition);
             if (ctx.IsReplaying)
                 log.LogInformation("Container has been deleted");
+            ctx.SetCustomStatus($"workflow completed successfully in {ctx.CurrentUtcDateTime - startTime}");
         }
 
         [FunctionName(nameof(AciWaitForExitOrchestrator))]
