@@ -222,10 +222,19 @@ $ffmpeg = @{
 
 $json = $ffmpeg | ConvertTo-Json
 
-Invoke-WebRequest -Method POST `
+$orchestrationInfo = Invoke-RestMethod -Method POST `
                   -Uri "https://$hostName/api/AciCreate?code=$functionCode" `
                   -Body $json `
                   -Headers @{ "Content-Type"="application/json" }
+
+Write-Output "Started orchestration $($orchestrationInfo.id)"
+
+
+# check the orchestration info
+Invoke-RestMethod $orchestrationInfo.statusQueryGetUri
+
+# to cancel 
+Invoke-RestMethod -Method Post -Uri $orchestrationInfo.terminatePostUri.Replace("{text}","cancelled")
 
 # check the container exists
 az resource list -g $aciResourceGroup -o table
@@ -241,6 +250,12 @@ Start-Process "http://$containerDomain"
 az storage file list -s $shareName  `
         --account-key $storageAccountKey `
         --account-name $storageAccountName -o table
+
+# to delete the thumbnail
+az storage file delete -s $shareName `
+        -p "thumb.png" `
+        --account-key $storageAccountKey `
+        --account-name $storageAccountName
 
 # clean up the container
 az container delete -g $aciResourceGroup -n $containerGroupName -y
