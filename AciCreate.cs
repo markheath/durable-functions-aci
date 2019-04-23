@@ -1,3 +1,4 @@
+using System;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.WebJobs;
@@ -47,20 +48,22 @@ namespace DurableFunctionsAci
         {
             var definition = ctx.GetInput<ContainerGroupDefinition>();
             var startTime = ctx.CurrentUtcDateTime;
+            if (!ctx.IsReplaying) log.LogInformation($"Started workflow to create {definition.ContainerGroupName}");
+
             ctx.SetCustomStatus("creating container");
             await ctx.CallActivityAsync(nameof(AciCreateActivity), definition);
-            if (ctx.IsReplaying)
-                log.LogInformation("Created container");
+            if (!ctx.IsReplaying) log.LogInformation("Created container");
             
             var subOrchestrationId = $"{ctx.InstanceId}-1";
             ctx.SetCustomStatus($"waiting for container - {subOrchestrationId}");
-            await ctx.CallSubOrchestratorAsync(nameof(AciWaitForExitOrchestrator), subOrchestrationId, definition);
-            if (ctx.IsReplaying)
-                log.LogInformation("Container has exited");
+            var maximumRunDuration = ctx.CurrentUtcDateTime.AddMinutes(30);
+            await ctx.CallSubOrchestratorAsync(nameof(AciWaitForExitOrchestrator), subOrchestrationId, (definition, maximumRunDuration));
+            if (!ctx.IsReplaying) log.LogInformation("Container has exited");
+
             ctx.SetCustomStatus("deleting container");
             await ctx.CallActivityAsync(nameof(AciDeleteContainerGroupActivity), definition);
-            if (ctx.IsReplaying)
-                log.LogInformation("Container has been deleted");
+            if (!ctx.IsReplaying) log.LogInformation("Container has been deleted");
+
             ctx.SetCustomStatus($"workflow completed successfully in {ctx.CurrentUtcDateTime - startTime}");
         }
 
@@ -69,7 +72,7 @@ namespace DurableFunctionsAci
             [OrchestrationTrigger] DurableOrchestrationContextBase ctx,
             ILogger log)
         {
-            var definition = ctx.GetInput<ContainerGroupDefinition>();
+            var (definition,maximumRunDuration) = ctx.GetInput<(ContainerGroupDefinition,DateTime)>();
 
             var containerGroupStatus = await ctx.CallActivityAsync<ContainerGroupStatus>(nameof(AciGetContainerGroupStatusActivity), definition);
             log.LogInformation($"{containerGroupStatus.Name} status: {containerGroupStatus.State}, " +
@@ -88,6 +91,11 @@ namespace DurableFunctionsAci
                 await ctx.CreateTimer(ctx.CurrentUtcDateTime.AddSeconds(30), cts.Token);
             }
             
+            if (ctx.CurrentUtcDateTime > maximumRunDuration)
+            {
+                log.LogWarning($"Container did not exit before {maximumRunDuration} - abandoning wait");
+                return;
+            }
             ctx.ContinueAsNew(definition);
         }
 
