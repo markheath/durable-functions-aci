@@ -14,9 +14,22 @@ namespace DurableFunctionsAci
         [FunctionName("AciMonitor")]
         public static void Run([EventGridTrigger]EventGridEvent eventGridEvent, ILogger log)
         {
-            log.LogInformation($"{eventGridEvent.EventType}-{eventGridEvent.Subject}-{eventGridEvent.Topic}");
-            
+            log.LogInformation($"EVENT: {eventGridEvent.EventType}-{eventGridEvent.Subject}-{eventGridEvent.Topic}");
             log.LogInformation(eventGridEvent.Data.ToString());
+            
+            // some properties on data:
+            //  "resourceProvider": "Microsoft.ContainerInstance"
+            // "status": "Succeeded"
+            // "resourceUri": "/subscriptions/mysubid/resourceGroups/DurableFunctionsAciContainers/providers/Microsoft.ContainerInstance/containerGroups/markacitest1",
+            dynamic data = eventGridEvent.Data;
+            if (data.operationName == "Microsoft.ContainerInstance/containerGroups/delete")
+            {
+                log.LogInformation($"Deleted container group {data.resourceUri} with status {data.status}");
+            }
+            else if (data.operationName == "Microsoft.ContainerInstance/containerGroups/write")
+            {
+                log.LogInformation($"Created or updated container group {data.resourceUri} with status {data.status}");
+            }
         }
     }
 }
