@@ -8,6 +8,7 @@ using Microsoft.Azure.Management.ResourceManager.Fluent;
 using Microsoft.Azure.Management.ResourceManager.Fluent.Authentication;
 using Microsoft.Azure.Management.ResourceManager.Fluent.Core;
 using Microsoft.Extensions.Logging;
+using Newtonsoft.Json;
 
 namespace DurableFunctionsAci
 {
@@ -130,7 +131,7 @@ namespace DurableFunctionsAci
             log.LogInformation($"Requesting container group '{cg.ContainerGroupName}' status");
 
             var containerGroup = await azure.ContainerGroups.GetByResourceGroupAsync(cg.ResourceGroupName, cg.ContainerGroupName);
-            log.LogInformation($"Got container group state '{containerGroup.State}' with {containerGroup.Containers.Count} containers");
+            log.LogInformation($"Got container group state '{containerGroup.State}' with {containerGroup.Containers.Count} containers - [{containerGroup.Containers.FirstOrDefault().Key}]");
             var status = new ContainerGroupStatus() {
                 State = containerGroup.State,
                 Id = containerGroup.Id,
@@ -144,6 +145,7 @@ namespace DurableFunctionsAci
                     RestartCount = c.InstanceView.RestartCount,
                 }).ToArray()
             };
+            log.LogInformation(JsonConvert.SerializeObject(status));
             return status;
         }
 

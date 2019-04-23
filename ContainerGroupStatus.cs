@@ -6,10 +6,9 @@ namespace DurableFunctionsAci
     public class ContainerGroupStatus
     {
         public ContainerInstanceStatus[] Containers { get; set;}
-
         public string State { get; set; }
-        public string Id { get; internal set; }
-        public string Name { get; internal set; }
-        public string ResourceGroupName { get; internal set; }
+        public string Id { get; set; }
+        public string Name { get; set; }
+        public string ResourceGroupName { get; set; }
     }
 }

@@ -26,7 +26,7 @@ namespace DurableFunctionsAci
             log.LogInformation($"AciCreate: CG={def.ContainerGroupName}, RG={def.ResourceGroupName}");
             if (string.IsNullOrEmpty(def.ContainerGroupName))
             {
-                return new BadRequestObjectResult("Please pass a name on the query string");
+                return new BadRequestObjectResult("Must provide a container group name");
             }
 
             def.EnvironmentVariables = new Dictionary<string, string>
@@ -34,9 +34,10 @@ namespace DurableFunctionsAci
                 { "Name", "Value" },
             };
 
-            //await RunTaskBasedContainer(log, def);
             var orchestrationId = await client.StartNewAsync(nameof(AciCreateOrchestrator), def);
-            return new OkObjectResult($"Started {def.ContainerGroupName} with {orchestrationId}");
+            var payload = client.CreateHttpManagementPayload(orchestrationId);
+            log.LogInformation($"Started {def.ContainerGroupName} with {orchestrationId}");
+            return new OkObjectResult(payload);
         }
 
         [FunctionName(nameof(AciCreateOrchestrator))]
@@ -62,23 +63,18 @@ namespace DurableFunctionsAci
             ILogger log)
         {
             var definition = ctx.GetInput<ContainerGroupDefinition>();
-            var timeoutAt = ctx.CurrentUtcDateTime.AddMinutes(30); // monitor for a max 30 mins for now to avoid runaway
+
             var containerGroupStatus = await ctx.CallActivityAsync<ContainerGroupStatus>(nameof(AciGetContainerGroupStatusActivity), definition);
             log.LogInformation($"{containerGroupStatus.Name} status: {containerGroupStatus.State}, " +
                 $"{containerGroupStatus.Containers[0]?.CurrentState?.State}, " +
                 $"{containerGroupStatus.Containers[0]?.CurrentState?.DetailStatus}");
-            // states we've seen: "Terminated"
-            // detailState = completed
+            // container instance states we've seen: "Terminated", detailState = Completed
             if (containerGroupStatus.Containers[0]?.CurrentState?.State == "Terminated")
             {
+                log.LogInformation($"Container has terminated with exit code {containerGroupStatus.Containers[0]?.CurrentState?.ExitCode}");
                 return;
             }
 
-            if (ctx.CurrentUtcDateTime > timeoutAt)
-            {
-                log.LogWarning("Abandoning wait for exit orchestrator");
-                return;
-            }
             // go round again
             using(var cts = new CancellationTokenSource())
             {
