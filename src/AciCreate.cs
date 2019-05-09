@@ -86,10 +86,7 @@ namespace DurableFunctionsAci
             }
 
             // go round again
-            using(var cts = new CancellationTokenSource())
-            {
-                await ctx.CreateTimer(ctx.CurrentUtcDateTime.AddSeconds(30), cts.Token);
-            }
+            await ctx.CreateTimer(ctx.CurrentUtcDateTime.AddSeconds(30), CancellationToken.None);
             
             if (ctx.CurrentUtcDateTime > maximumRunDuration)
             {
@@ -102,8 +99,7 @@ namespace DurableFunctionsAci
         [FunctionName(nameof(AciCreateActivity))]
         public static async Task AciCreateActivity(
             [ActivityTrigger] ContainerGroupDefinition definition,
-            ILogger logger
-        )
+            ILogger logger)
         {
             await AciHelpers.RunTaskBasedContainer(logger, definition);
         }
@@ -112,8 +108,7 @@ namespace DurableFunctionsAci
         [FunctionName(nameof(AciGetContainerGroupStatusActivity))]
         public static async Task<ContainerGroupStatus> AciGetContainerGroupStatusActivity(
             [ActivityTrigger] ContainerGroupDefinition definition,
-            ILogger logger
-        )
+            ILogger logger)
         {
             return await AciHelpers.GetContainerGroupStatus(logger, definition);
         }
@@ -121,8 +116,7 @@ namespace DurableFunctionsAci
         [FunctionName(nameof(AciDeleteContainerGroupActivity))]
         public static async Task AciDeleteContainerGroupActivity(
             [ActivityTrigger] ContainerGroupDefinition definition,
-            ILogger logger
-        )
+            ILogger logger)
         {
             await AciHelpers.DeleteContainerGroup(logger, definition);
         }
